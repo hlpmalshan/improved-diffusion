@@ -166,7 +166,8 @@ class TrainLoop:
             batch, cond = next(self.data)
             self.run_step(batch, cond)
             if self.step % self.log_interval == 0:
-                logger.dumpkvs()
+                if dist.get_rank() == 0:
+                    logger.dumpkvs()
             if self.step % self.save_interval == 0:
                 self.save()
                 # Run for a finite amount of time in integration tests.
@@ -257,10 +258,11 @@ class TrainLoop:
     def _anneal_lr(self):
         if not self.lr_anneal_steps:
             return
-        frac_done = (self.step + self.resume_step) / self.lr_anneal_steps
-        lr = self.lr * (1 - frac_done)
-        for param_group in self.opt.param_groups:
-            param_group["lr"] = lr
+        # frac_done = (self.step + self.resume_step) / self.lr_anneal_steps
+        # lr = self.lr * (1 - frac_done)
+        # for param_group in self.opt.param_groups:
+        #     param_group["lr"] = lr
+        return
 
     def log_step(self):
         logger.logkv("step", self.step + self.resume_step)

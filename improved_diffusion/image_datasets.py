@@ -1,9 +1,17 @@
 from PIL import Image
 import blobfile as bf
-from mpi4py import MPI
+# from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 
+import torch.distributed as dist
+
+def ddp_rank_size():
+    if dist.is_available() and dist.is_initialized():
+        return dist.get_rank(), dist.get_world_size()
+    return 0, 1
+
+rank, world_size = ddp_rank_size()
 
 def load_data(
     *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
@@ -38,8 +46,8 @@ def load_data(
         image_size,
         all_files,
         classes=classes,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
+        shard=rank,
+        num_shards=world_size,
     )
     if deterministic:
         loader = DataLoader(
