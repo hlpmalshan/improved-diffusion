@@ -54,6 +54,7 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
+        reg_val = args.reg_val,
     ).run_loop()
 
 
@@ -72,6 +73,7 @@ def create_argparser():
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
+        reg_val=0.0, 
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
