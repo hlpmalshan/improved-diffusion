@@ -45,6 +45,7 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        reg_val = 0.0
     ):
         self.model = model
         self.diffusion = diffusion
@@ -65,7 +66,8 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
-
+        self.reg_val = reg_val ###############
+        
         self.step = 0
         self.resume_step = 0
         self.global_batch = self.batch_size * dist.get_world_size()
@@ -119,7 +121,7 @@ class TrainLoop:
             if dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
                 self.model.load_state_dict(
-                    dist_util.load_state_dict(
+                    dist_util.load_state_dict_dist(
                         resume_checkpoint, map_location=dist_util.dev()
                     )
                 )
@@ -134,7 +136,7 @@ class TrainLoop:
         if ema_checkpoint:
             if dist.get_rank() == 0:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
-                state_dict = dist_util.load_state_dict(
+                state_dict = dist_util.load_state_dict_dist(
                     ema_checkpoint, map_location=dist_util.dev()
                 )
                 ema_params = self._state_dict_to_master_params(state_dict)
@@ -143,16 +145,47 @@ class TrainLoop:
         return ema_params
 
     def _load_optimizer_state(self):
+        # main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        # opt_checkpoint = bf.join(
+        #     bf.dirname(main_checkpoint), f"opt{self.resume_step:06}.pt"
+        # )
+        # rank = dist_util.get_rank()
+        # exists = 1 if (rank == 0 and bf.exists(opt_checkpoint)) else 0
+        # if bf.exists(opt_checkpoint):
+        #     logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
+        #     state_dict = dist_util.load_state_dict_dist(
+        #         opt_checkpoint, map_location="cpu", use_broadcast=False
+        #     )
+        #     self.opt.load_state_dict(state_dict)
         main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        if main_checkpoint is None:
+            return
+
         opt_checkpoint = bf.join(
             bf.dirname(main_checkpoint), f"opt{self.resume_step:06}.pt"
         )
-        if bf.exists(opt_checkpoint):
-            logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
-            state_dict = dist_util.load_state_dict(
-                opt_checkpoint, map_location=dist_util.dev()
-            )
-            self.opt.load_state_dict(state_dict)
+
+        # Simple local existence check on every rank.
+        # On a shared filesystem this will return the same on all ranks.
+        if not bf.exists(opt_checkpoint):
+            return
+
+        # if dist.get_rank() == 0:
+        logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
+
+        # IMPORTANT: all ranks must call this.
+        # Rank 0 will read from disk; others will just receive via broadcast inside.
+        with bf.BlobFile(opt_checkpoint, "rb") as f:
+            state_dict = th.load(f, map_location="cpu")
+
+        self.opt.load_state_dict(state_dict)
+        # state_dict = dist_util.load_state_dict_dist(
+        #     opt_checkpoint,
+        #     map_location=dist_util.dev(),
+        #     use_broadcast=True,
+        # )
+
+        # self.opt.load_state_dict(state_dict)
 
     def _setup_fp16(self):
         self.master_params = make_master_params(self.model_params)
@@ -202,6 +235,7 @@ class TrainLoop:
                 self.ddp_model,
                 micro,
                 t,
+                self.reg_val,
                 model_kwargs=micro_cond,
             )
 
@@ -215,7 +249,8 @@ class TrainLoop:
                 self.schedule_sampler.update_with_local_losses(
                     t, losses["loss"].detach()
                 )
-
+                
+            
             loss = (losses["loss"] * weights).mean()
             log_loss_dict(
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}

@@ -129,7 +129,8 @@ def setup_dist(timeout_sec: int = 600) -> None:
         world_size=world,
         timeout=timedelta(seconds=timeout_sec),
     )
-
+    
+        
     if th.cuda.is_available():
         th.cuda.set_device(local_rank)
 

@@ -122,8 +122,10 @@ class GaussianDiffusion:
         model_mean_type,
         model_var_type,
         loss_type,
+        reg = 0.0,
         rescale_timesteps=False,
     ):
+        self.reg = reg ####################
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
@@ -674,7 +676,7 @@ class GaussianDiffusion:
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
-    def training_losses(self, model, x_start, t, model_kwargs=None, noise=None):
+    def training_losses(self, model, x_start, t, reg_val, model_kwargs=None, noise=None):
         """
         Compute training losses for a single timestep.
 
@@ -740,10 +742,13 @@ class GaussianDiffusion:
             }[self.model_mean_type]
             assert model_output.shape == target.shape == x_start.shape
             terms["mse"] = mean_flat((target - model_output) ** 2)
+            B, C, H, W = model_output.shape
+            # Iso
+            terms["iso"] = reg_val * (1 - mean_flat(model_output.reshape(B, -1).square()))**2  ##################
             if "vb" in terms:
-                terms["loss"] = terms["mse"] + terms["vb"]
+                terms["loss"] = terms["mse"] + terms["vb"] + terms["iso"]
             else:
-                terms["loss"] = terms["mse"]
+                terms["loss"] = terms["mse"] + terms["iso"]
         else:
             raise NotImplementedError(self.loss_type)
 
