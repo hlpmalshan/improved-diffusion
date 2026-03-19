@@ -13,7 +13,7 @@ set -euo pipefail
 ########################################
 
 # GPUs used for training (comma-separated, e.g. "0,1,2")
-TRAIN_GPUS="0,1,2,3,4,5"
+TRAIN_GPUS="1,2,3,4"
 TRAIN_NPROC=$(awk -F',' '{print NF}' <<< "${TRAIN_GPUS}")
 
 # GPUs used for sampling (comma-separated; usually 1 GPU is sufficient)
@@ -25,7 +25,7 @@ SAMPLE_NPROC=$(awk -F',' '{print NF}' <<< "${SAMPLE_GPUS}")
 ########################################
 
 DATA_DIR="/data/diffusion/repos/ddim/ddim_celebahq/datasets/celebahq256/celebahq256_imgs/train"
-LOG_ROOT="/data/diffusion/repos/improved-diffusion/logs_improved_diffusion_celebhq"
+LOG_ROOT="/data/diffusion/repos/improved-diffusion/logs_improved_diffusion_celebhq_new"
 EVAL_SCRIPT="evaluation.py"   # your metrics script
 REAL_DIR="${DATA_DIR}"
 IMAGE_SIZE=256
@@ -37,49 +37,53 @@ IMAGE_SIZE=256
 ########################################
 
 # Hyperparameters from your Celebhq config
-BATCH_SIZE=8
+BATCH_SIZE=16
 IMG_SIZE=256
-NUM_CH=192
-RES_BLOCKS=3
-ATTN_RES="32,16,8"
-DROPOUT=0.3
+NUM_CH=128
+RES_BLOCKS=2
+ATTN_RES="16"
+DROPOUT=0.1
 DIFF_STEPS=1000
-NOISE_SCHED="cosine"
-LR=0.0002
+NOISE_SCHED="linear"
+LR=0.00002
 EMA_RATE=0.9999
 WEIGHT_DECAY=0.0
-TOTAL_ITERS=800000
+TOTAL_ITERS=500000
 SAVE_FREQ=20000
 
-# echo "==== [Stage 1] Training Celebhq models (reg=0.3, 0.0) on GPUs ${TRAIN_GPUS} ===="
+echo "==== [Stage 1] Training Celebhq models (reg=0.3, 0.0) on GPUs ${TRAIN_GPUS} ===="
 
-# for REG in 0.3; do
-#     EXP_DIR="${LOG_ROOT}/celebhq_reg${REG}_cosine"
-#     mkdir -p "${EXP_DIR}"
-#     export OPENAI_LOGDIR="${EXP_DIR}"
+for REG in 0.0; do
+    EXP_DIR="${LOG_ROOT}/celebhq_reg${REG}"
+    mkdir -p "${EXP_DIR}"
+    export OPENAI_LOGDIR="${EXP_DIR}"
 
-#     echo "[Train][Celebhq] reg_val=${REG}"
-#     CUDA_VISIBLE_DEVICES=${TRAIN_GPUS} \
-#     torchrun --standalone --nproc_per_node=${TRAIN_NPROC} --master_port=29801 \
-#       scripts/image_train.py \
-#         --data_dir "${DATA_DIR}" \
-#         --batch_size "${BATCH_SIZE}" \
-#         --image_size "${IMG_SIZE}" \
-#         --num_channels "${NUM_CH}" \
-#         --num_res_blocks "${RES_BLOCKS}" \
-#         --attention_resolutions "${ATTN_RES}" \
-#         --dropout "${DROPOUT}" \
-#         --learn_sigma True \
-#         --diffusion_steps "${DIFF_STEPS}" \
-#         --noise_schedule "${NOISE_SCHED}" \
-#         --lr "${LR}" \
-#         --ema_rate "${EMA_RATE}" \
-#         --weight_decay "${WEIGHT_DECAY}" \
-#         --lr_anneal_steps "${TOTAL_ITERS}" \
-#         --save_interval "${SAVE_FREQ}" \
-#         --log_interval 10 \
-#         --reg_val "${REG}"
-# done
+    echo "[Train][Celebhq] reg_val=${REG}"
+    CUDA_VISIBLE_DEVICES=${TRAIN_GPUS} \
+    torchrun --standalone --nproc_per_node=${TRAIN_NPROC} --master_port=29801 \
+      scripts/image_train.py \
+        --data_dir "${DATA_DIR}" \
+        --batch_size "${BATCH_SIZE}" \
+        --image_size "${IMG_SIZE}" \
+        --num_channels "${NUM_CH}" \
+        --num_res_blocks "${RES_BLOCKS}" \
+        --attention_resolutions "${ATTN_RES}" \
+        --dropout "${DROPOUT}" \
+        --learn_sigma True \
+        --diffusion_steps "${DIFF_STEPS}" \
+        --noise_schedule "${NOISE_SCHED}" \
+        --lr "${LR}" \
+        --ema_rate "${EMA_RATE}" \
+        --weight_decay "${WEIGHT_DECAY}" \
+        --lr_anneal_steps "${TOTAL_ITERS}" \
+        --save_interval "${SAVE_FREQ}" \
+        --log_interval 10 \
+        --num_heads 1 \
+        --use_scale_shift_norm False\
+        --rescale_learned_sigmas False\
+        --rescale_timesteps False\
+        --reg_val "${REG}"
+done
 
 # for REG in 0.0; do
 #     EXP_DIR="${LOG_ROOT}/celebhq_reg${REG}"
@@ -156,47 +160,47 @@ SAVE_FREQ=20000
 #       --batch_size "${BATCH_SIZE_SAMPLE}"
 # done
 
-########################################
-# 3) EVALUATION
-########################################
+# ########################################
+# # 3) EVALUATION
+# ########################################
 
-echo "==== [Stage 3] Evaluating CelebA FID / IS / PRDC ===="
+# echo "==== [Stage 3] Evaluating CelebA FID / IS / PRDC ===="
 
-OUT_CSV="${LOG_ROOT}/celebhq_reg0.0/metrics_celebhq0.0.csv"
+# OUT_CSV="${LOG_ROOT}/celebhq_reg0.0/metrics_celebhq0.0.csv"
 
-# Initialize CSV header if not present
-if [ ! -f "${OUT_CSV}" ]; then
-    echo "dataset,reg_val,exp_dir,ckpt,samples_dir,fid,is_mean,is_std,precision,recall,density,coverage" > "${OUT_CSV}"
-fi
+# # Initialize CSV header if not present
+# if [ ! -f "${OUT_CSV}" ]; then
+#     echo "dataset,reg_val,exp_dir,ckpt,samples_dir,fid,is_mean,is_std,precision,recall,density,coverage" > "${OUT_CSV}"
+# fi
 
-for REG in 0.0 ; do
-    EXP_DIR="${LOG_ROOT}/celebhq_reg${REG}"
-    SAMPLES_DIR="${EXP_DIR}/samples"
+# for REG in 0.0 ; do
+#     EXP_DIR="${LOG_ROOT}/celebhq_reg${REG}"
+#     SAMPLES_DIR="${EXP_DIR}/samples"
 
-    if [ ! -d "${SAMPLES_DIR}" ]; then
-        echo "[Eval][Celebhq] Skip reg=${REG}: missing ${SAMPLES_DIR}" >&2
-        continue
-    fi
+#     if [ ! -d "${SAMPLES_DIR}" ]; then
+#         echo "[Eval][Celebhq] Skip reg=${REG}: missing ${SAMPLES_DIR}" >&2
+#         continue
+#     fi
 
-    CKPT=$(ls "${EXP_DIR}" | grep '^model' | sort | tail -n1 || true)
+#     CKPT=$(ls "${EXP_DIR}" | grep '^model' | sort | tail -n1 || true)
 
-    echo "[Eval][Celebhq] reg_val=${REG}"
+#     echo "[Eval][Celebhq] reg_val=${REG}"
 
-    OUTPUT=$(python "${EVAL_SCRIPT}" \
-        --real_dir "${REAL_DIR}" \
-        --gen_dir "${SAMPLES_DIR}" \
-        --image_size "${IMAGE_SIZE}")
+#     OUTPUT=$(python "${EVAL_SCRIPT}" \
+#         --real_dir "${REAL_DIR}" \
+#         --gen_dir "${SAMPLES_DIR}" \
+#         --image_size "${IMAGE_SIZE}")
 
-    FID=$(echo "${OUTPUT}"         | awk -F': ' '/^FID:/{print $2}')
-    IS_LINE=$(echo "${OUTPUT}"     | awk -F': ' '/^Inception Score:/{print $2}')
-    IS_MEAN=$(echo "${IS_LINE}"    | awk '{print $1}')
-    IS_STD=$(echo "${IS_LINE}"     | awk '{print $3}')
-    PREC=$(echo "${OUTPUT}"        | awk -F': ' '/^Precision:/{print $2}')
-    REC=$(echo "${OUTPUT}"         | awk -F': ' '/^Recall:/{print $2}')
-    DENS=$(echo "${OUTPUT}"        | awk -F': ' '/^Density:/{print $2}')
-    COV=$(echo "${OUTPUT}"         | awk -F': ' '/^Coverage:/{print $2}')
+#     FID=$(echo "${OUTPUT}"         | awk -F': ' '/^FID:/{print $2}')
+#     IS_LINE=$(echo "${OUTPUT}"     | awk -F': ' '/^Inception Score:/{print $2}')
+#     IS_MEAN=$(echo "${IS_LINE}"    | awk '{print $1}')
+#     IS_STD=$(echo "${IS_LINE}"     | awk '{print $3}')
+#     PREC=$(echo "${OUTPUT}"        | awk -F': ' '/^Precision:/{print $2}')
+#     REC=$(echo "${OUTPUT}"         | awk -F': ' '/^Recall:/{print $2}')
+#     DENS=$(echo "${OUTPUT}"        | awk -F': ' '/^Density:/{print $2}')
+#     COV=$(echo "${OUTPUT}"         | awk -F': ' '/^Coverage:/{print $2}')
 
-    echo "celebhq,${REG},${EXP_DIR},${CKPT},${SAMPLES_DIR},${FID},${IS_MEAN},${IS_STD},${PREC},${REC},${DENS},${COV}" >> "${OUT_CSV}"
-done
+#     echo "celebhq,${REG},${EXP_DIR},${CKPT},${SAMPLES_DIR},${FID},${IS_MEAN},${IS_STD},${PREC},${REC},${DENS},${COV}" >> "${OUT_CSV}"
+# done
 
-echo "==== Done (train → sample → eval for Celebhq) ===="
+# echo "==== Done (train → sample → eval for Celebhq) ===="
